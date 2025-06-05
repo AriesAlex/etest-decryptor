@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eTest Decryptor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .file-input-button {
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .file-input-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        #results-section {
+            transition: opacity 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans antialiased">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-5xl">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-white mb-2">eTest Decryptor</h1>
+            <p class="text-lg text-gray-400">Загрузите файл теста (.et1, .et2, .et3), чтобы расшифровать его</p>
+        </header>
+
+        <main>
+            <!-- Секция загрузки файла -->
+            <div class="bg-gray-800 rounded-lg p-6 mb-8 shadow-lg text-center">
+                <label for="file-upload" class="file-input-button inline-flex items-center bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 inline-block mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    Выберите файл...
+                </label>
+                <input id="file-upload" type="file" class="hidden" accept=".et1,.et2,.et3">
+                <p id="file-name" class="text-gray-500 mt-4">Файл не выбран</p>
+                <p id="status-message" class="text-yellow-400 mt-2 h-5"></p>
+            </div>
+
+            <!-- Секция с результатами (изначально скрыта) -->
+            <div id="results-section" class="hidden opacity-0">
+                <!-- Карта с ответами -->
+                <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-lg">
+                    <h2 class="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">1. Вопросы и Ответы</h2>
+                    <div id="qa-output" class="prose prose-invert max-w-none text-gray-300"></div>
+                </div>
+
+                <!-- Карта с полным расшифрованным контентом -->
+                <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-lg">
+                    <h2 class="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">2. Полностью расшифрованный контент</h2>
+                    <pre class="bg-gray-900 rounded-md p-4 max-h-96 overflow-auto"><code id="full-content-output" class="text-sm text-gray-300"></code></pre>
+                </div>
+
+                <!-- Карта с возможностью выгрузки -->
+                <div class="bg-gray-800 rounded-lg p-6 shadow-lg">
+                    <h2 class="text-2xl font-bold text-white mb-4 border-b border-gray-700 pb-2">3. Сохранить результаты</h2>
+                    <div class="flex flex-col md:flex-row gap-4">
+                        <a id="download-full" class="flex items-center justify-center text-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition-colors flex-1">
+                            Скачать полную версию (.txt)
+                        </a>
+                        <a id="download-fdb" class="flex items-center justify-center text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors flex-1">
+                            Скачать версию для редактора (.fdb)
+                        </a>
+                        <a href="https://etest.ru/getfile.php?files=2" target="_blank" class="flex items-center justify-center text-center bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded transition-colors flex-1">
+                            Скачать редактор eTest
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const TS1_KEY = "PoLiK";
+    const TS2_KEY = "dfafFDSAFffdf342fd";
+    const TS3_KEY = "jfkbFDSFDSdsf32cxc";
+    const KEYS = { "[TS1]": TS1_KEY, "[TS2]": TS2_KEY, "[TS3]": TS3_KEY };
+    const TYPE_MAP = {
+        1: "Простой выбор", 2: "Множественный выбор", 3: "Ранжировка",
+        5: "Пары соответствий", 6: "Пары соответствий (тип 2)",
+        0: "Ответ в свободной форме / Информационный блок"
+    };
+
+    const cp1251Decoder = new TextDecoder('windows-1251');
+    const fileInput = document.getElementById('file-upload');
+    const fileNameEl = document.getElementById('file-name');
+    const statusEl = document.getElementById('status-message');
+    const resultsSection = document.getElementById('results-section');
+    const qaOutputEl = document.getElementById('qa-output');
+    const fullContentOutputEl = document.getElementById('full-content-output');
+    const downloadFullLink = document.getElementById('download-full');
+    const downloadFdbLink = document.getElementById('download-fdb');
+
+    fileInput.addEventListener('change', handleFileSelect);
+
+    async function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        fileNameEl.textContent = file.name;
+        statusEl.textContent = "Обработка...";
+        resultsSection.classList.add('hidden', 'opacity-0');
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const dataView = new Uint8Array(buffer);
+            
+            const magicBytes = new TextDecoder().decode(dataView.slice(0, 5));
+            const key = KEYS[magicBytes];
+            if (!key) throw new Error("Неверный формат файла (не найден [TS1]/[TS2]/[TS3])");
+
+            const xorDecryptedData = decryptXOR(dataView.slice(5), key);
+            const initialText = cp1251Decoder.decode(xorDecryptedData);
+            const fullyDecryptedText = processHexBlocks(initialText);
+            const cleanedFinalText = fullyDecryptedText.split('\n').filter(line => line.trim()).join('\n');
+            
+            fullContentOutputEl.textContent = cleanedFinalText;
+            parseAndDisplayQA(fullyDecryptedText);
+            setupDownloads(xorDecryptedData, cleanedFinalText, file.name);
+
+            resultsSection.classList.remove('hidden');
+            setTimeout(() => resultsSection.classList.remove('opacity-0'), 10);
+            statusEl.textContent = "Готово!";
+        } catch (error) {
+            statusEl.textContent = `Ошибка: ${error.message}`;
+            console.error(error);
+        }
+    }
+
+    function decryptXOR(data, key) {
+        const keyLen = key.length;
+        const dataArray = new Uint8Array(data);
+        for (let i = 0; i < dataArray.length; i++) {
+            const mask = ((i % 0x400) % 0x28 + key.charCodeAt(i % keyLen)) % 0xFF;
+            dataArray[i] ^= mask;
+        }
+        return dataArray;
+    }
+
+    function decodeHexContent(hexStr) {
+        const cleanedHex = hexStr.replace(/\s/g, '');
+        const hexData = cleanedHex.length > 8 ? cleanedHex.substring(8) : cleanedHex;
+        try {
+            const bytes = new Uint8Array(hexData.length / 2);
+            for (let i = 0; i < hexData.length; i += 2) {
+                bytes[i / 2] = parseInt(hexData.substr(i, 2), 16);
+            }
+            return cp1251Decoder.decode(bytes);
+        } catch (e) {
+            return hexStr;
+        }
+    }
+    
+    function processHexBlocks(text) {
+        const hexBlockRegex = /<(\d+|gr-id)>(.*?)<\/\1>/gis;
+        return text.replace(hexBlockRegex, (match, tagName, content) => {
+            const decodedContent = decodeHexContent(content.trim());
+            const indentedContent = decodedContent.trim().split('\n').map(line => '    ' + line).join('\n');
+            return `<${tagName}>\n${indentedContent}\n</${tagName}>`;
+        });
+    }
+
+    function formatContent(text) {
+        if (!text) return "";
+        let formattedText = text;
+        formattedText = formattedText.replace(/<img.*?src=['"](.*?)['"].*?>/gi, "[Изображение: $1]");
+        formattedText = formattedText.replace(/<(?:object|embed).*?(?:src|value|filename)=['"](.*?)['"].*?>/gis, "[Медиа-объект: $1]");
+        formattedText = formattedText.replace(/<[^<]+?>/g, ' ');
+        return formattedText.replace(/\s+/g, ' ').trim();
+    }
+    
+    function pluralizeAnswers(n) {
+        if (n % 10 === 1 && n % 100 !== 11) return "ответ";
+        if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) return "ответа";
+        return "ответов";
+    }
+
+    function parseAndDisplayQA(fullText) {
+        let html = '';
+        const bodyMatch = fullText.match(/<T_body>(.*?)<\/T_body>/is);
+        if (!bodyMatch) {
+            qaOutputEl.innerHTML = '<p>Не удалось найти блок <T_body> с вопросами.</p>';
+            return;
+        }
+        const questionBlocks = Array.from(bodyMatch[1].matchAll(/<(\d+)>(.*?)<\/\1>/gis));
+        for (const [i, match] of questionBlocks.entries()) {
+            const [, qId, qContent] = match;
+            html += `<div class="p-4 mb-4 border border-gray-700 rounded-lg">`;
+            const questionMatch = qContent.match(/<question>(.*?)<\/question>/is);
+            const questionText = questionMatch ? formatContent(questionMatch[1]) : formatContent(qContent);
+            html += `<h3 class="font-bold text-lg text-white mb-2">Вопрос #${i + 1} (ID: ${qId})</h3>`;
+            html += `<p class="mb-3">${questionText}</p>`;
+            const optionsMatch = qContent.match(/<options>(.*?)<\/options>/is);
+            if (!optionsMatch) {
+                html += `<p class="text-sm text-indigo-400 font-semibold">${TYPE_MAP[0]}</p></div>`;
+                continue;
+            }
+            const optionsContent = optionsMatch[1];
+            const typeMatch = optionsContent.match(/type=(\d+)/);
+            const qTypeId = typeMatch ? parseInt(typeMatch[1], 10) : 0;
+            html += `<p class="text-sm text-indigo-400 font-semibold mb-2">${TYPE_MAP[qTypeId] || 'Неизвестный тип'}</p>`;
+            html += `<div class="pl-4 border-l-2 border-gray-600">`;
+            if (qTypeId === 1) {
+                const rightMatch = optionsContent.match(/right=(\d+)/);
+                let answerText = "Не удалось определить ответ";
+                if (rightMatch) {
+                    const answerMatch = qContent.match(new RegExp(`<a_${rightMatch[1]}>(.*?)</a_${rightMatch[1]}>`, "is"));
+                    if(answerMatch) answerText = formatContent(answerMatch[1]);
+                }
+                html += `<p><span class="font-semibold">Ответ:</span> ${answerText}</p>`;
+            } else if (qTypeId === 2) {
+                const rightMatch = optionsContent.match(/right=(\d+)/);
+                const numCorrect = rightMatch ? parseInt(rightMatch[1], 10) : 0;
+                html += `<p class="font-semibold">${numCorrect} правильных ${pluralizeAnswers(numCorrect)}:</p><ul class="list-disc list-inside mt-1">`;
+                const allAnswers = Array.from(qContent.matchAll(/<a_\d+>(.*?)<\/a_\d+>/gis));
+                allAnswers.slice(0, numCorrect).forEach(ans => {
+                    html += `<li>${formatContent(ans[1])}</li>`;
+                });
+                html += `</ul>`;
+            } else if (qTypeId === 3) {
+                html += `<p class="font-semibold">Правильный порядок:</p><p>`;
+                const allAnswers = Array.from(qContent.matchAll(/<a_\d+>(.*?)<\/a_\d+>/gis));
+                const orderedList = allAnswers.map(ans => formatContent(ans[1]));
+                html += orderedList.join(' → ');
+                html += `</p>`;
+            } else if (qTypeId === 5 || qTypeId === 6) {
+                html += `<p class="font-semibold">Правильные пары:</p><ul class="list-disc list-inside mt-1">`;
+                const allAnswers = Array.from(qContent.matchAll(/<a_\d+>(.*?)<\/a_\d+>/gis));
+                allAnswers.forEach(ans => {
+                    const parts = ans[1].split(':::');
+                    const left = formatContent(parts[0]);
+                    const right = parts.length > 1 ? formatContent(parts[1]) : "";
+                    html += `<li>${left} → ${right}</li>`;
+                });
+                html += `</ul>`;
+            }
+            html += `</div></div>`;
+        }
+        qaOutputEl.innerHTML = html;
+    }
+    
+    function setupDownloads(fdbData, fullTextData, originalFileName) {
+        const baseName = originalFileName.replace(/\.[^/.]+$/, "");
+        const fdbBlob = new Blob([fdbData], { type: 'application/octet-stream' });
+        downloadFdbLink.href = URL.createObjectURL(fdbBlob);
+        downloadFdbLink.download = `${baseName}_decrypted.fdb`;
+        const fullBlob = new Blob([fullTextData], { type: 'text/plain;charset=utf-8' });
+        downloadFullLink.href = URL.createObjectURL(fullBlob);
+        downloadFullLink.download = `${baseName}_full.txt`;
+    }
+});
+</script>
+
+</body>
+</html>
